@@ -29,4 +29,4 @@ Requires:
 * Python 3
 
 Usage:
-* tracksRename 0..1*(-s) tracklistpath 1..*(trackfilepath)
+* tracksRename (-s) tracklistpath trackfilepath (trackfilepath)..
