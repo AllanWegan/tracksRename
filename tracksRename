@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+
+import re
+import os
+import argparse
+
+newNameRe = r'([0-9]+)[ \t;\.\-]+(.+)$'
+
+def validateFsPath(value):
+  value = os.path.join(os.getcwd(), value)
+  if not os.path.isfile(value):
+    msg = 'Not a regular file: {0}!'
+    raise argparse.ArgumentTypeError(msg.format(value))
+  return value
+
+def getArgs():
+  parser = argparse.ArgumentParser(
+    description='Renames tracks according to a text file.'
+  )
+  parser.add_argument('tracklist', type=validateFsPath
+  , help='Path of the text file containing the desired track names.'
+  )
+  parser.add_argument('tracks', type=validateFsPath
+  , metavar='track'
+  , nargs='+'
+  , help='Path of files to be renamed.'
+  )
+  parser.add_argument('--oldNameRe', type=validateFsPath
+  , help='Regular expression extracting the track number from the old file name'
+    + ' (without extension). When multiple patterns given, the first one'
+    + ' matching all track file names is used.'
+  , nargs='*'
+  , default=(r'[^0-9]*([0-9]+)$',r'([0-9]+)[^0-9]*$')
+  )
+  parser.add_argument('--simulate', '-s'
+  , help='Do not actually do anything but only print what would have been done.'
+  , action='store_const'
+  , const=True
+  , default=False
+  )
+  return parser.parse_args()
+
+def joinNamesWithDir(names, directory):
+  return [os.path.join(directory, name) for name in names]
+
+def doRename(directory, oldName, newName):
+  oldPath, newPath = joinNamesWithDir((oldName, newName), directory)
+  print('Renaming "{0}" to "{1}"...'.format(oldName, newName))
+  os.rename(oldPath, newPath)
+
+# noinspection PyUnusedLocal
+def doRenameDummy(directory, oldName, newName):
+  print('Would rename "{0}" to "{1}".'.format(oldName, newName))
+
+def main():
+  print('Track Files Renamer V1.0')
+  print()
+  args = getArgs()
+  if args.simulate:
+    print('Running in siumation mode - not actually doing anything!')
+
+  # extract and check numbers from given track file paths:
+  directory = None
+  trackPaths = {}
+  ok = False
+  for oldNameRe in args.oldNameRe:
+    trackPaths = {}
+    ok = True
+    for trackPath in args.tracks:
+      name, ext = os.path.splitext(os.path.basename(trackPath))
+      match = re.match(oldNameRe, name)
+      if match is None:
+        ok = False
+        break
+      trackDir = os.path.dirname(trackPath)
+      if directory is None:
+        directory = trackDir
+      elif trackDir != directory:
+        msg = 'Track is not in same directory as others: {0}!'
+        raise ValueError(msg.format(trackPath))
+      trackNr = int(match.group(1))
+      if trackNr in trackPaths:
+        ok = False
+        break
+      trackPaths[trackNr] = directory, name, ext
+    if ok:
+      break
+  if not ok:
+    msg = ('No oldNameRe matches all given tracks extracting non-duplicate'
+    + ' numbers!')
+    raise ValueError(msg)
+  trackCount = len(trackPaths)
+
+  # Detect track numbering not starting at 1 and gaps in numbering:
+  foundNumbers = sorted(trackPaths.keys())
+  if foundNumbers[0] != 1:
+    msg = 'Tracks are numbered starting at {0} instead of 1!'
+    raise ValueError(msg.format(foundNumbers[0]))
+  lastNr = None
+  for expected, found in enumerate(foundNumbers, start=1):
+    if expected != found:
+      msg = 'There is a gap in track numbering between tracks {0} and {1}!'
+      raise ValueError(msg.format(lastNr, found))
+    lastNr = found
+
+  # Get new names from track list file:
+  print('Track list file: {0}'.format(args.tracklist))
+  newNames = []
+  trackNrExpected = 1
+  with open(args.tracklist, 'r') as trackNamesFile:
+    skippedHead = False
+    for lineNr, line in enumerate(trackNamesFile, start=1):
+      line = line.strip()
+      if len(line) == 0:
+        continue
+      match = re.match(newNameRe, line)
+      if match is None:
+        if skippedHead:
+          msg = 'Line {0} does not match the track name expression: {1}!'
+          raise ValueError(msg.format(lineNr, line))
+      else:
+        skippedHead = True
+        trackNr, trackName = int(match.group(1)), match.group(2)
+
+        # Detect numbering gaps in track list:
+        if trackNr != trackNrExpected:
+          msg = ('Line {0} contains name for track {2} instead of expected'
+          + ' track {3}: {1}!')
+          raise ValueError(msg.format(lineNr, line, trackNr, trackNrExpected))
+
+        newNames.append(trackName)
+        trackNrExpected += 1
+    if len(newNames) != trackCount:
+      msg = 'Found {1} track names in {0} but {2} tracks given!'
+      raise ValueError(msg.format(args.tracklist, len(newNames), trackCount))
+
+  # Rename track files:
+  print('Tracks directory: {0}'.format(directory))
+  renameFun = doRenameDummy if args.simulate else doRename
+  numberPadLen = len(str(len(trackPaths)))
+  newPathTpl = '{0:0' + str(numberPadLen) + '} - {1}{2}'
+  for number, newName in enumerate(newNames, start=1):
+    directory, oldName, ext = trackPaths[number]
+    oldName = '{0}{1}'.format(oldName, ext)
+    newName = newPathTpl.format(number, newName, ext)
+    renameFun(directory, oldName, newName)
+
+  print('Done.')
+
+if __name__ == '__main__':
+  main()
